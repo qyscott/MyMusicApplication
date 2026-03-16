@@ -1,0 +1,90 @@
+CREATE TABLE library_track (
+    id TEXT NOT NULL PRIMARY KEY,
+    title TEXT NOT NULL,
+    artist TEXT NOT NULL,
+    album TEXT,
+    duration_ms INTEGER NOT NULL,
+    uri TEXT NOT NULL,
+    artwork_uri TEXT,
+    last_modified INTEGER NOT NULL
+);
+
+CREATE TABLE favorite_track (
+    track_id TEXT NOT NULL PRIMARY KEY,
+    added_at INTEGER NOT NULL
+);
+
+selectLibrary:
+SELECT
+    t.id,
+    t.title,
+    t.artist,
+    t.album,
+    t.duration_ms,
+    t.uri,
+    t.artwork_uri,
+    t.last_modified,
+    CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END AS is_favorite
+FROM library_track t
+LEFT JOIN favorite_track f ON f.track_id = t.id
+ORDER BY LOWER(t.title), LOWER(t.artist);
+
+selectFavorites:
+SELECT
+    t.id,
+    t.title,
+    t.artist,
+    t.album,
+    t.duration_ms,
+    t.uri,
+    t.artwork_uri,
+    t.last_modified,
+    1 AS is_favorite
+FROM library_track t
+INNER JOIN favorite_track f ON f.track_id = t.id
+ORDER BY LOWER(t.title), LOWER(t.artist);
+
+selectTrackById:
+SELECT
+    t.id,
+    t.title,
+    t.artist,
+    t.album,
+    t.duration_ms,
+    t.uri,
+    t.artwork_uri,
+    t.last_modified,
+    CASE WHEN f.track_id IS NULL THEN 0 ELSE 1 END AS is_favorite
+FROM library_track t
+LEFT JOIN favorite_track f ON f.track_id = t.id
+WHERE t.id = ?;
+
+isFavorite:
+SELECT COUNT(*)
+FROM favorite_track
+WHERE track_id = ?;
+
+upsertTrack:
+INSERT OR REPLACE INTO library_track(
+    id,
+    title,
+    artist,
+    album,
+    duration_ms,
+    uri,
+    artwork_uri,
+    last_modified
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+clearLibrary:
+DELETE FROM library_track;
+
+insertFavorite:
+INSERT OR IGNORE INTO favorite_track(track_id, added_at)
+VALUES (?, ?);
+
+removeFavorite:
+DELETE FROM favorite_track
+WHERE track_id = ?;
+
