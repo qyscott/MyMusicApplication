@@ -37,3 +37,11 @@ in your IDE’s toolbar or open the [/iosApp](./iosApp) directory in Xcode and r
 ---
 
 Learn more about [Kotlin Multiplatform](https://www.jetbrains.com/help/kotlin-multiplatform-dev/get-started.html)…
+
+## 跨平台实现说明
+
+- **共享层占比**：`shared/commonMain` + `sqldelight` 约占主要业务与宿主源码的 **38%**，已覆盖数据模型、播放控制、状态管理、收藏与设置存储。
+- **适配难点**：本地音乐扫描、播放器能力、数据库驱动、权限和后台播放都依赖平台原生 API。Android 基于 `MediaStore` + `MediaPlayer`，iOS 侧需要继续补齐 `AVPlayer` 相关实现。
+- **实现方式**：通过 `AudioEngine`、`MusicScanner`、`MusicRepository` 抽象能力，并用 `platformModule()` 注入平台实现，把业务逻辑尽量收敛到共享层。
+- 
+> Android 主链路已打通，iOS 端仍在补齐。
