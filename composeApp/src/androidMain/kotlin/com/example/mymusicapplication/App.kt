@@ -5,7 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -230,52 +230,76 @@ private fun BottomPlayerDrawer(
     onSpeedChange: (Float) -> Unit,
 ) {
     val currentTrack = state.currentTrack
+    val scope = rememberCoroutineScope()
     var dragging by remember { mutableStateOf(false) }
-    var dragOffsetPx by remember { mutableStateOf(0f) }
-    var settleExpanded by remember { mutableStateOf<Boolean?>(null) }
+    var initialized by remember { mutableStateOf(false) }
+    val offsetY = remember { Animatable(0f) }
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         val density = LocalDensity.current
         val maxDrawerHeight = maxHeight * 0.78f
         val sheetHeight = minOf(MiniPlayerExpandedHeight, maxDrawerHeight).coerceAtLeast(MiniPlayerPeekHeight)
         val collapsedOffsetPx = with(density) { (sheetHeight - MiniPlayerPeekHeight).toPx() }
-        val effectiveExpanded = settleExpanded ?: expanded
+        val expandedOffsetPx = 0f
 
-        val animatedOffsetPx by animateFloatAsState(
-            targetValue = if (effectiveExpanded) 0f else collapsedOffsetPx,
-            animationSpec = spring(),
-            label = "bottom_player_drawer_offset",
-        )
-
-        LaunchedEffect(expanded, settleExpanded) {
-            if (settleExpanded != null && settleExpanded == expanded) {
-                settleExpanded = null
+        LaunchedEffect(collapsedOffsetPx) {
+            offsetY.updateBounds(lowerBound = expandedOffsetPx, upperBound = collapsedOffsetPx)
+            val target = if (expanded) expandedOffsetPx else collapsedOffsetPx
+            if (!initialized) {
+                offsetY.snapTo(target)
+                initialized = true
+            } else if (!dragging) {
+                offsetY.snapTo(offsetY.value.coerceIn(expandedOffsetPx, collapsedOffsetPx))
             }
         }
 
-        LaunchedEffect(expanded, collapsedOffsetPx, dragging, settleExpanded) {
-            if (!dragging && settleExpanded == null) {
-                dragOffsetPx = if (expanded) 0f else collapsedOffsetPx
+        LaunchedEffect(expanded, collapsedOffsetPx, dragging, initialized) {
+            if (initialized && !dragging) {
+                val target = if (expanded) expandedOffsetPx else collapsedOffsetPx
+                // 只有当目标位置与当前动画目标不一致时才执行动画
+                // 这样可以避免拖动结束后的动画与 finishDrag 中的动画冲突
+                if (offsetY.targetValue != target) {
+                    offsetY.animateTo(target, animationSpec = spring())
+                }
             }
         }
 
-        var currentOffsetPx = if (dragging) dragOffsetPx else animatedOffsetPx
-        var progress = if (collapsedOffsetPx <= 0f) 1f else {
+        var currentOffsetPx = offsetY.value
+        var progress = if (collapsedOffsetPx <= 0f) {
+            1f
+        } else {
             (1f - currentOffsetPx / collapsedOffsetPx).coerceIn(0f, 1f)
         }
 
         fun updateDrag(dragAmount: Float) {
-            dragOffsetPx = (dragOffsetPx + dragAmount).coerceIn(0f, collapsedOffsetPx)
-            currentOffsetPx = if (dragging) dragOffsetPx else animatedOffsetPx
-            progress = (1f - currentOffsetPx / collapsedOffsetPx).coerceIn(0f, 1f)
-
+            currentOffsetPx = offsetY.value
+            progress = if (collapsedOffsetPx <= 0f) {
+                1f
+            } else {
+                (1f - currentOffsetPx / collapsedOffsetPx).coerceIn(0f, 1f)
+            }
+            scope.launch {
+                offsetY.snapTo((offsetY.value + dragAmount).coerceIn(expandedOffsetPx, collapsedOffsetPx))
+            }
         }
 
         fun finishDrag() {
             val targetExpanded = progress >= DragExpandThreshold
-            settleExpanded = targetExpanded
-            dragging = false
+            // 先根据拖动位置决定目标状态并执行动画，动画完成后再设置 dragging = false
             onExpandedChange(targetExpanded)
+            scope.launch {
+                offsetY.animateTo(
+                    targetValue = if (targetExpanded) expandedOffsetPx else collapsedOffsetPx,
+                    animationSpec = spring(),
+                )
+                // 等待动画完成后再允许 LaunchedEffect 接管状态同步
+                // dragging 在下一帧重组时才会变为 false，避免 LaunchedEffect 立即触发
+            }
+            // 延迟一帧设置 dragging = false，确保动画已经开始
+            scope.launch {
+                kotlinx.coroutines.delay(50)
+                dragging = false
+            }
         }
 
         Surface(
@@ -298,15 +322,13 @@ private fun BottomPlayerDrawer(
                         detectVerticalDragGestures(
                             onDragStart = {
                                 dragging = true
-                                dragOffsetPx = currentOffsetPx
+                                scope.launch { offsetY.stop() }
                             },
                             onVerticalDrag = { _, dragAmount ->
                                 updateDrag(dragAmount)
                             },
                             onDragEnd = { finishDrag() },
-                            onDragCancel = {
-                                finishDrag()
-                            },
+                            onDragCancel = { finishDrag() },
                         )
                     },
                 ) {
@@ -360,7 +382,10 @@ private fun BottomPlayerDrawer(
                             enabled = currentTrack != null && progress > 0.95f,
                         )
 
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                        ) {
                             Button(onClick = onPrevious, enabled = currentTrack != null && progress > 0.95f) {
                                 Text("上一曲")
                             }
@@ -525,7 +550,7 @@ private fun MiniPlayerBar(
 }
 
 @Composable
-private fun RowScope.MiniPlayerAction(
+private fun MiniPlayerAction(
     enabled: Boolean,
     text: String,
     onClick: () -> Unit,
